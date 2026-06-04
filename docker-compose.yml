@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+
+  # ===== BASES DE DONNÉES POSTGRESQL =====
+  postgres:
+    image: postgres:15-alpine
+    container_name: bankplatform-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init-databases.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - bankplatform-network
+
+  # ===== MONGODB (pour audit-service) =====
+  mongodb:
+    image: mongo:7-jammy
+    container_name: bankplatform-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: mongo
+      MONGO_INITDB_ROOT_PASSWORD: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - bankplatform-network
+
+  # ===== KAFKA =====
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: bankplatform-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - bankplatform-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: bankplatform-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: true
+    networks:
+      - bankplatform-network
+
+  # ===== REDIS (cache JWT) =====
+  redis:
+    image: redis:7-alpine
+    container_name: bankplatform-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - bankplatform-network
+
+volumes:
+  postgres_data:
+  mongodb_data:
+
+networks:
+  bankplatform-network:
+    driver: bridge

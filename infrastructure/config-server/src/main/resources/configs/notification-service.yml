@@ -1,0 +1,22 @@
+server:
+  port: 8089
+
+spring:
+  application:
+    name: notification-service
+
+kafka:
+  bootstrap-servers: localhost:9092
+  consumer:
+    group-id: notification-group
+
+email:
+  host: smtp.gmail.com
+  port: 587
+  username: ${EMAIL_USERNAME:your-email@gmail.com}
+  password: ${EMAIL_PASSWORD:your-password}
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/

@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bankplatform-config
+  namespace: bankplatform
+data:
+  POSTGRES_HOST: "postgres-service"
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: "postgres"
+  EUREKA_URL: "http://discovery-server-service:8761/eureka/"
+  CONFIG_SERVER_URL: "http://config-server-service:8888"
+  ACCOUNT_SERVICE_URL: "http://account-service:8083"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bankplatform-secrets
+  namespace: bankplatform
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: "postgres"
+  JWT_SECRET: "bankplatform-secret-key-2024-very-long-and-secure-key-for-jwt"

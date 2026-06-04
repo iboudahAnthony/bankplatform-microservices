@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loan-service
+  namespace: bankplatform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: loan-service
+  template:
+    metadata:
+      labels:
+        app: loan-service
+    spec:
+      containers:
+        - name: loan-service
+          image: bankplatform/loan-service:1.0.0
+          ports:
+            - containerPort: 8086
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://postgres:postgres@postgres-service:5432/loan_db"
+          readinessProbe:
+            httpGet:
+              path: /loans/health
+              port: 8086
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loan-service
+  namespace: bankplatform
+spec:
+  selector:
+    app: loan-service
+  ports:
+    - port: 8086
+      targetPort: 8086

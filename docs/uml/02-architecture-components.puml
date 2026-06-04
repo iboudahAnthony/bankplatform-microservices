@@ -1,0 +1,136 @@
+@startuml Architecture - Diagramme de Composants
+
+skinparam componentStyle rectangle
+skinparam backgroundColor #FAFAFA
+skinparam component {
+  BackgroundColor #E8F4FD
+  BorderColor #2980B9
+  FontColor #2C3E50
+}
+
+title Architecture Microservices - Plateforme Bancaire Distribuée
+
+' ===== FRONTEND =====
+package "Frontend" #FEF9E7 {
+  [React Application] as REACT
+}
+
+' ===== INFRASTRUCTURE =====
+package "Infrastructure" #EBF5FB {
+  [API Gateway\n(Spring Cloud Gateway)] as GW
+  [Service Discovery\n(Eureka Server)] as EUREKA
+  [Config Server\n(Spring Cloud Config)] as CONFIG
+  [Message Broker\n(Apache Kafka)] as KAFKA
+}
+
+' ===== MICROSERVICES JAVA =====
+package "Microservices Java (Spring Boot)" #E8F8E8 {
+  [auth-service\n:8081] as AUTH
+  [customer-service\n:8082] as CUSTOMER
+  [account-service\n:8083] as ACCOUNT
+  [transaction-service\n:8084] as TRANSACTION
+  [operator-service\n:8085] as OPERATOR
+}
+
+' ===== MICROSERVICES PYTHON =====
+package "Microservices Python (FastAPI)" #FDF2F8 {
+  [loan-service\n:8086] as LOAN
+  [document-service\n:8087] as DOCUMENT
+  [reporting-service\n:8088] as REPORTING
+}
+
+' ===== MICROSERVICES NODE.JS =====
+package "Microservices Node.js (Express)" #FEF9E7 {
+  [notification-service\n:8089] as NOTIF
+  [audit-service\n:8090] as AUDIT
+}
+
+' ===== BASES DE DONNÉES =====
+package "Bases de Données" #F9EBEA {
+  database "auth-db\n(PostgreSQL)" as AUTH_DB
+  database "customer-db\n(PostgreSQL)" as CUSTOMER_DB
+  database "account-db\n(PostgreSQL)" as ACCOUNT_DB
+  database "transaction-db\n(PostgreSQL)" as TRANSACTION_DB
+  database "loan-db\n(PostgreSQL)" as LOAN_DB
+  database "operator-db\n(PostgreSQL)" as OPERATOR_DB
+  database "audit-db\n(MongoDB)" as AUDIT_DB
+  database "document-store\n(MinIO/S3)" as DOC_STORE
+}
+
+' ===== MONITORING =====
+package "Observabilité" #F4ECF7 {
+  [Prometheus] as PROM
+  [Grafana] as GRAFANA
+  [Zipkin\n(Tracing)] as ZIPKIN
+  [ELK Stack\n(Logs)] as ELK
+}
+
+' ===== CONNEXIONS =====
+
+REACT --> GW : HTTPS
+
+GW --> AUTH : REST
+GW --> CUSTOMER : REST
+GW --> ACCOUNT : REST
+GW --> TRANSACTION : REST
+GW --> LOAN : REST
+GW --> DOCUMENT : REST
+GW --> REPORTING : REST
+GW --> NOTIF : REST
+GW --> OPERATOR : REST
+
+GW ..> EUREKA : Service Discovery
+AUTH ..> EUREKA : Register
+CUSTOMER ..> EUREKA : Register
+ACCOUNT ..> EUREKA : Register
+TRANSACTION ..> EUREKA : Register
+LOAN ..> EUREKA : Register
+DOCUMENT ..> EUREKA : Register
+REPORTING ..> EUREKA : Register
+NOTIF ..> EUREKA : Register
+AUDIT ..> EUREKA : Register
+OPERATOR ..> EUREKA : Register
+
+AUTH ..> CONFIG : Get Config
+CUSTOMER ..> CONFIG : Get Config
+ACCOUNT ..> CONFIG : Get Config
+TRANSACTION ..> CONFIG : Get Config
+
+' Kafka Events
+CUSTOMER --> KAFKA : CustomerRegistered\nCustomerVerified
+ACCOUNT --> KAFKA : AccountOpened\nAccountClosed
+TRANSACTION --> KAFKA : TransactionCompleted\nTransactionFailed
+LOAN --> KAFKA : LoanApproved\nLoanRejected
+DOCUMENT --> KAFKA : DocumentProcessed
+
+KAFKA --> NOTIF : Consume Events
+KAFKA --> AUDIT : Consume Events
+KAFKA --> ACCOUNT : Consume Events
+KAFKA --> LOAN : Consume Events
+
+' Databases
+AUTH --> AUTH_DB
+CUSTOMER --> CUSTOMER_DB
+ACCOUNT --> ACCOUNT_DB
+TRANSACTION --> TRANSACTION_DB
+LOAN --> LOAN_DB
+OPERATOR --> OPERATOR_DB
+AUDIT --> AUDIT_DB
+DOCUMENT --> DOC_STORE
+
+' Inter-service calls
+TRANSACTION --> ACCOUNT : Vérif solde (REST)
+LOAN --> CUSTOMER : Vérif client (REST)
+LOAN --> DOCUMENT : Récup documents (REST)
+DOCUMENT --> DOCUMENT : OCR Processing
+
+' Monitoring
+AUTH ..> PROM : Metrics
+CUSTOMER ..> PROM : Metrics
+ACCOUNT ..> PROM : Metrics
+TRANSACTION ..> PROM : Metrics
+PROM --> GRAFANA
+GW ..> ZIPKIN : Traces
+CUSTOMER ..> ZIPKIN : Traces
+
+@enduml

@@ -1,0 +1,216 @@
+services:
+
+  # ===== BASES DE DONNÉES =====
+  postgres:
+    image: postgres:15-alpine
+    container_name: bankplatform-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init-databases.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - bankplatform-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongodb:
+    image: mongo:7-jammy
+    container_name: bankplatform-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: mongo
+      MONGO_INITDB_ROOT_PASSWORD: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - bankplatform-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: bankplatform-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - bankplatform-network
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: bankplatform-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    networks:
+      - bankplatform-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: bankplatform-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: true
+    networks:
+      - bankplatform-network
+
+  # ===== INFRASTRUCTURE =====
+  config-server:
+    build: ./infrastructure/config-server
+    container_name: bankplatform-config
+    ports:
+      - "8888:8888"
+    networks:
+      - bankplatform-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8888/actuator/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+
+  discovery-server:
+    build: ./infrastructure/discovery-server
+    container_name: bankplatform-eureka
+    ports:
+      - "8761:8761"
+    depends_on:
+      config-server:
+        condition: service_healthy
+    networks:
+      - bankplatform-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8761/actuator/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+
+  api-gateway:
+    build: ./infrastructure/api-gateway
+    container_name: bankplatform-gateway
+    ports:
+      - "8080:8080"
+    depends_on:
+      discovery-server:
+        condition: service_healthy
+    environment:
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+    networks:
+      - bankplatform-network
+
+  # ===== MICROSERVICES JAVA =====
+  auth-service:
+    build: ./services/auth-service
+    container_name: bankplatform-auth
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/auth_db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+    networks:
+      - bankplatform-network
+
+  customer-service:
+    build: ./services/customer-service
+    container_name: bankplatform-customer
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/customer_db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+    networks:
+      - bankplatform-network
+
+  account-service:
+    build: ./services/account-service
+    container_name: bankplatform-account
+    ports:
+      - "8083:8083"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/account_db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+    networks:
+      - bankplatform-network
+
+  transaction-service:
+    build: ./services/transaction-service
+    container_name: bankplatform-transaction
+    ports:
+      - "8084:8084"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/transaction_db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+      ACCOUNT_SERVICE_URL: http://account-service:8083
+    networks:
+      - bankplatform-network
+
+  # ===== MICROSERVICES PYTHON =====
+  loan-service:
+    build: ./services/loan-service
+    container_name: bankplatform-loan
+    ports:
+      - "8086:8086"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/loan_db
+    networks:
+      - bankplatform-network
+
+  # ===== MICROSERVICES NODE.JS =====
+  notification-service:
+    build: ./services/notification-service
+    container_name: bankplatform-notification
+    ports:
+      - "8089:8089"
+    environment:
+      PORT: 8089
+    networks:
+      - bankplatform-network
+
+volumes:
+  postgres_data:
+  mongodb_data:
+
+networks:
+  bankplatform-network:
+    driver: bridge

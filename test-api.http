@@ -1,0 +1,201 @@
+### ===== AUTH SERVICE TESTS =====
+
+### 1. Health Check
+GET http://localhost:8081/auth/health
+
+###
+
+### 2. Inscription (Register)
+POST http://localhost:8081/auth/register
+Content-Type: application/json
+
+{
+  "firstName": "Test",
+  "lastName": "User",
+  "email": "test@bank.com",
+  "password": "password123",
+  "phoneNumber": "0600000000"
+}
+
+###
+
+### 3. Connexion (Login)
+POST http://localhost:8081/auth/login
+Content-Type: application/json
+
+{
+  "email": "test@bank.com",
+  "password": "password123"
+}
+
+###
+
+### 4. Refresh Token (remplace TON_REFRESH_TOKEN par la valeur reçue au login)
+POST http://localhost:8081/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "TON_REFRESH_TOKEN"
+}
+
+###
+
+### ===== CUSTOMER SERVICE TESTS =====
+
+### 6. Health Check Customer
+GET http://localhost:8082/customers/health
+
+###
+
+### 7. Créer un client
+POST http://localhost:8082/customers
+Content-Type: application/json
+
+{
+  "firstName": "Jean",
+  "lastName": "Dupont",
+  "email": "jean.dupont@email.com",
+  "phoneNumber": "0700000001",
+  "nationality": "Française",
+  "address": "12 rue de la Paix",
+  "city": "Paris",
+  "country": "France"
+}
+
+###
+
+### 8. Lister tous les clients
+GET http://localhost:8082/customers
+
+###
+
+### 9. Obtenir un client par ID (remplace l'UUID)
+GET http://localhost:8082/customers/CUSTOMER_ID_ICI
+
+###
+
+### 10. Vérifier un client (KYC)
+POST http://localhost:8082/customers/CUSTOMER_ID_ICI/verify
+
+###
+
+### 11. Changer statut
+PATCH http://localhost:8082/customers/CUSTOMER_ID_ICI/status
+Content-Type: application/json
+
+{
+  "status": "ACTIVE"
+}
+
+###
+
+### ===== ACCOUNT SERVICE TESTS =====
+
+### 12. Health Check Account
+GET http://localhost:8083/accounts/health
+
+###
+
+### 13. Ouvrir un compte (remplace CUSTOMER_ID par un vrai UUID)
+POST http://localhost:8083/accounts
+Content-Type: application/json
+
+{
+  "customerId": "CUSTOMER_ID_ICI",
+  "type": "COURANT",
+  "currency": "XOF",
+  "initialDeposit": 50000
+}
+
+###
+
+### 14. Consulter les comptes d'un client
+GET http://localhost:8083/accounts/customer/8db3dd00-15c1-49dc-9d20-d1c6377b6077
+
+###
+
+### 15. Créditer un compte
+POST http://localhost:8083/accounts/ACCOUNT_ID_ICI/credit
+Content-Type: application/json
+
+{
+  "amount": 10000
+}
+
+###
+
+### 16. Débiter un compte
+POST http://localhost:8083/accounts/ACCOUNT_ID_ICI/debit
+Content-Type: application/json
+
+{
+  "amount": 5000
+}
+
+###
+
+### ===== API GATEWAY TESTS (quand gateway sera lancée) =====
+
+### 5. Register via Gateway
+POST http://localhost:8080/api/auth/register
+Content-Type: application/json
+
+{
+  "firstName": "Gateway",
+  "lastName": "User",
+  "email": "gateway@bank.com",
+  "password": "password123"
+}
+
+### ===== TRANSACTION SERVICE TESTS =====
+
+### 17. Health Check Transaction
+GET http://localhost:8084/transactions/health
+
+###
+
+### 18. Dépôt (remplace ACCOUNT_ID par un vrai UUID)
+POST http://localhost:8084/transactions
+Content-Type: application/json
+
+{
+  "type": "DEPOT",
+  "destinationAccountId": "ACCOUNT_ID_ICI",
+  "amount": 50000,
+  "currency": "XOF",
+  "description": "Dépôt initial"
+}
+
+###
+
+### 19. Retrait
+POST http://localhost:8084/transactions
+Content-Type: application/json
+
+{
+  "type": "RETRAIT",
+  "sourceAccountId": "ACCOUNT_ID_ICI",
+  "amount": 10000,
+  "currency": "XOF",
+  "description": "Retrait guichet"
+}
+
+###
+
+### 20. Transfert entre deux comptes
+POST http://localhost:8084/transactions
+Content-Type: application/json
+
+{
+  "type": "TRANSFERT_INTRA",
+  "sourceAccountId": "ACCOUNT_SOURCE_ID",
+  "destinationAccountId": "ACCOUNT_DEST_ID",
+  "amount": 5000,
+  "currency": "XOF",
+  "description": "Transfert client"
+}
+
+###
+
+### 21. Historique d'un compte
+GET http://localhost:8084/transactions/account/ACCOUNT_ID_ICI

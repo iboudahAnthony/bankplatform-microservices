@@ -1,0 +1,235 @@
+name: CI/CD - Plateforme Bancaire Distribuée
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  REGISTRY: docker.io
+  IMAGE_PREFIX: bankplatform
+
+jobs:
+
+  # =========================================
+  # JOB 1 : Tests et Build des services Java
+  # =========================================
+  build-java-services:
+    name: Build & Test Java Services
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        service:
+          - name: config-server
+            path: infrastructure/config-server
+            port: 8888
+          - name: discovery-server
+            path: infrastructure/discovery-server
+            port: 8761
+          - name: api-gateway
+            path: infrastructure/api-gateway
+            port: 8080
+          - name: auth-service
+            path: services/auth-service
+            port: 8081
+          - name: customer-service
+            path: services/customer-service
+            port: 8082
+          - name: account-service
+            path: services/account-service
+            port: 8083
+          - name: transaction-service
+            path: services/transaction-service
+            port: 8084
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build ${{ matrix.service.name }}
+        run: |
+          cd ${{ matrix.service.path }}
+          mvn clean package -DskipTests -q
+
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.service.name }}-jar
+          path: ${{ matrix.service.path }}/target/*.jar
+          retention-days: 1
+
+  # =========================================
+  # JOB 2 : Test du service Python
+  # =========================================
+  build-python-service:
+    name: Build & Test Python Service
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          cd services/loan-service
+          pip install -r requirements.txt
+
+      - name: Check syntax
+        run: |
+          cd services/loan-service
+          python -m py_compile main.py
+          python -m py_compile app/models.py
+          python -m py_compile app/schemas.py
+          echo "Syntax check passed"
+
+  # =========================================
+  # JOB 3 : Test du service Node.js
+  # =========================================
+  build-node-service:
+    name: Build & Test Node.js Service
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: services/notification-service/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          cd services/notification-service
+          npm ci
+
+      - name: Check syntax
+        run: |
+          cd services/notification-service
+          node --check src/index.js
+          echo "Syntax check passed"
+
+  # =========================================
+  # JOB 4 : Build et push des images Docker
+  # =========================================
+  build-docker-images:
+    name: Build & Push Docker Images
+    runs-on: ubuntu-latest
+    needs: [build-java-services, build-python-service, build-node-service]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    strategy:
+      matrix:
+        service:
+          - name: config-server
+            path: infrastructure/config-server
+          - name: discovery-server
+            path: infrastructure/discovery-server
+          - name: api-gateway
+            path: infrastructure/api-gateway
+          - name: auth-service
+            path: services/auth-service
+          - name: customer-service
+            path: services/customer-service
+          - name: account-service
+            path: services/account-service
+          - name: transaction-service
+            path: services/transaction-service
+          - name: loan-service
+            path: services/loan-service
+          - name: notification-service
+            path: services/notification-service
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push ${{ matrix.service.name }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.service.path }}
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.service.name }}:latest
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.service.name }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # =========================================
+  # JOB 5 : Déploiement sur Kubernetes
+  # =========================================
+  deploy-to-kubernetes:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    needs: build-docker-images
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+
+      - name: Update image tags in K8s manifests
+        run: |
+          for service in auth-service customer-service account-service transaction-service loan-service notification-service; do
+            sed -i "s|bankplatform/${service}:.*|bankplatform/${service}:${{ github.sha }}|g" k8s/${service}.yml
+          done
+
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl apply -f k8s/namespace.yml
+          kubectl apply -f k8s/configmap.yml
+          kubectl apply -f k8s/postgres.yml
+          kubectl apply -f k8s/config-server.yml
+          kubectl apply -f k8s/discovery-server.yml
+          kubectl apply -f k8s/api-gateway.yml
+          kubectl apply -f k8s/auth-service.yml
+          kubectl apply -f k8s/customer-service.yml
+          kubectl apply -f k8s/account-service.yml
+          kubectl apply -f k8s/transaction-service.yml
+          kubectl apply -f k8s/loan-service.yml
+          kubectl apply -f k8s/notification-service.yml
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/auth-service -n bankplatform --timeout=120s
+          kubectl rollout status deployment/customer-service -n bankplatform --timeout=120s
+          kubectl rollout status deployment/account-service -n bankplatform --timeout=120s
+          kubectl rollout status deployment/transaction-service -n bankplatform --timeout=120s
+          echo "Déploiement réussi !"
+
+      - name: Show pods status
+        run: kubectl get pods -n bankplatform
