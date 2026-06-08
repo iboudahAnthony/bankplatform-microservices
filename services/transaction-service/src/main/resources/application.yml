@@ -15,18 +15,14 @@ spring:
     hibernate:
       ddl-auto: update
     show-sql: false
-
-# URL interne vers account-service
-account-service:
-  url: http://localhost:8083
-
-# Kafka
-spring:
   kafka:
     bootstrap-servers: localhost:9092
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+account-service:
+  url: http://localhost:8083
 
 eureka:
   client:

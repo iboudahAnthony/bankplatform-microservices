@@ -1,0 +1,66 @@
+@startuml DDD - Context Map
+
+skinparam rectangle {
+  BackgroundColor #E8F4FD
+  BorderColor #2980B9
+  FontColor #2C3E50
+  BorderThickness 2
+}
+
+skinparam arrow {
+  Color #2C3E50
+  FontColor #E74C3C
+  FontSize 11
+}
+
+title DDD - Context Map : Relations entre Bounded Contexts
+
+' Core Domains
+rectangle "**CUSTOMER CONTEXT**\n(Core Domain)\n─────────────────\nAgrégats: Customer, Document\nÉvénements: CustomerRegistered,\nCustomerVerified, CustomerRejected\n─────────────────\nService: customer-service (Java)" as CUSTOMER #C8E6C9
+
+rectangle "**ACCOUNT CONTEXT**\n(Core Domain)\n─────────────────\nAgrégats: Account\nÉvénements: AccountOpened,\nAccountClosed, BalanceUpdated\n─────────────────\nService: account-service (Java)" as ACCOUNT #C8E6C9
+
+rectangle "**TRANSACTION CONTEXT**\n(Core Domain)\n─────────────────\nAgrégats: Transaction\nÉvénements: TransactionInitiated,\nTransactionCompleted, TransactionFailed\n─────────────────\nService: transaction-service (Java)" as TRANSACTION #C8E6C9
+
+rectangle "**LOAN CONTEXT**\n(Core Domain)\n─────────────────\nAgrégats: Loan, Repayment\nÉvénements: LoanRequested,\nLoanApproved, LoanRejected,\nRepaymentMade\n─────────────────\nService: loan-service (Python)" as LOAN #C8E6C9
+
+' Supporting Domains
+rectangle "**AUTH CONTEXT**\n(Supporting Domain)\n─────────────────\nAgrégats: User, RefreshToken\nÉvénements: UserLoggedIn,\nPasswordChanged, TokenRevoked\n─────────────────\nService: auth-service (Java)" as AUTH #FFF9C4
+
+rectangle "**OPERATOR CONTEXT**\n(Supporting Domain)\n─────────────────\nAgrégats: Operator, BusinessRule\nÉvénements: OperatorActivated,\nRuleUpdated\n─────────────────\nService: operator-service (Java)" as OPERATOR #FFF9C4
+
+rectangle "**DOCUMENT/OCR CONTEXT**\n(Supporting Domain)\n─────────────────\nAgrégats: Document, OCRResult\nÉvénements: DocumentUploaded,\nOCRCompleted, DocumentVerified\n─────────────────\nService: document-service (Python)" as DOCUMENT #FFF9C4
+
+' Generic Domains
+rectangle "**NOTIFICATION CONTEXT**\n(Generic Domain)\n─────────────────\nService: notification-service (Node.js)\nCanaux: Email, SMS, Push" as NOTIF #FFCCBC
+
+rectangle "**AUDIT CONTEXT**\n(Generic Domain)\n─────────────────\nService: audit-service (Node.js)\nStockage: MongoDB" as AUDIT #FFCCBC
+
+rectangle "**REPORTING CONTEXT**\n(Generic Domain)\n─────────────────\nService: reporting-service (Python)\nOutils: Pandas, Charts" as REPORTING #FFCCBC
+
+' Relations
+CUSTOMER --> AUTH : "Conformiste\n(utilise User)"
+CUSTOMER --> DOCUMENT : "Client/Fournisseur\n(soumet documents)"
+ACCOUNT --> CUSTOMER : "Conformiste\n(référence customerId)"
+ACCOUNT --> OPERATOR : "Conformiste\n(règles opérateur)"
+TRANSACTION --> ACCOUNT : "Client/Fournisseur\n(débit/crédit)"
+TRANSACTION --> OPERATOR : "Conformiste\n(commissions, plafonds)"
+LOAN --> CUSTOMER : "Client/Fournisseur\n(vérif éligibilité)"
+LOAN --> DOCUMENT : "Client/Fournisseur\n(analyse docs)"
+LOAN --> ACCOUNT : "Client/Fournisseur\n(décaissement)"
+
+CUSTOMER ..> NOTIF : "Événements\n(Kafka)"
+TRANSACTION ..> NOTIF : "Événements\n(Kafka)"
+LOAN ..> NOTIF : "Événements\n(Kafka)"
+ACCOUNT ..> NOTIF : "Événements\n(Kafka)"
+
+CUSTOMER ..> AUDIT : "Événements\n(Kafka)"
+TRANSACTION ..> AUDIT : "Événements\n(Kafka)"
+LOAN ..> AUDIT : "Événements\n(Kafka)"
+AUTH ..> AUDIT : "Événements\n(Kafka)"
+
+TRANSACTION ..> REPORTING : "Données agrégées"
+LOAN ..> REPORTING : "Données agrégées"
+ACCOUNT ..> REPORTING : "Données agrégées"
+
+@enduml

@@ -1,0 +1,296 @@
+@startuml Diagramme de Classes - Modèle Domaine DDD
+
+skinparam classAttributeIconSize 0
+skinparam classFontSize 13
+skinparam packageStyle rectangle
+
+title Diagramme de Classes - Modèle Domaine (DDD)
+
+' ===== BOUNDED CONTEXT: CUSTOMER =====
+package "Bounded Context: Customer" #E8F8E8 {
+
+  class Customer <<Aggregate Root>> {
+    - id: UUID
+    - firstName: String
+    - lastName: String
+    - email: String
+    - phoneNumber: String
+    - dateOfBirth: LocalDate
+    - nationality: String
+    - status: CustomerStatus
+    - operatorId: UUID
+    - createdAt: LocalDateTime
+    + register()
+    + verify()
+    + suspend()
+    + updateProfile()
+  }
+
+  enum CustomerStatus {
+    PENDING
+    UNDER_REVIEW
+    VERIFIED
+    ACTIVE
+    SUSPENDED
+    REJECTED
+  }
+
+  class Document <<Entity>> {
+    - id: UUID
+    - customerId: UUID
+    - type: DocumentType
+    - fileUrl: String
+    - extractedData: Map<String, String>
+    - verificationStatus: VerificationStatus
+    - uploadedAt: LocalDateTime
+    + extract()
+    + verify()
+  }
+
+  enum DocumentType {
+    CNI
+    PASSPORT
+    JUSTIFICATIF_DOMICILE
+    BULLETIN_SALAIRE
+    RELEVE_BANCAIRE
+    CONTRAT_TRAVAIL
+  }
+
+  enum VerificationStatus {
+    PENDING
+    PROCESSING
+    VERIFIED
+    REJECTED
+  }
+
+  Customer "1" *-- "0..*" Document
+  Customer --> CustomerStatus
+  Document --> DocumentType
+  Document --> VerificationStatus
+}
+
+' ===== BOUNDED CONTEXT: ACCOUNT =====
+package "Bounded Context: Account" #EBF5FB {
+
+  class Account <<Aggregate Root>> {
+    - id: UUID
+    - accountNumber: String
+    - customerId: UUID
+    - operatorId: UUID
+    - type: AccountType
+    - balance: BigDecimal
+    - currency: String
+    - dailyLimit: BigDecimal
+    - monthlyLimit: BigDecimal
+    - status: AccountStatus
+    - openedAt: LocalDateTime
+    + open()
+    + close()
+    + freeze()
+    + debit(amount: BigDecimal)
+    + credit(amount: BigDecimal)
+    + checkBalance()
+  }
+
+  enum AccountType {
+    COURANT
+    EPARGNE
+    MOBILE_MONEY
+  }
+
+  enum AccountStatus {
+    ACTIVE
+    FROZEN
+    CLOSED
+    PENDING
+  }
+
+  Account --> AccountType
+  Account --> AccountStatus
+}
+
+' ===== BOUNDED CONTEXT: TRANSACTION =====
+package "Bounded Context: Transaction" #FEF9E7 {
+
+  class Transaction <<Aggregate Root>> {
+    - id: UUID
+    - reference: String
+    - type: TransactionType
+    - sourceAccountId: UUID
+    - destinationAccountId: UUID
+    - amount: BigDecimal
+    - fees: BigDecimal
+    - commission: BigDecimal
+    - currency: String
+    - status: TransactionStatus
+    - operatorSourceId: UUID
+    - operatorDestinationId: UUID
+    - initiatedAt: LocalDateTime
+    - completedAt: LocalDateTime
+    - description: String
+    + initiate()
+    + complete()
+    + fail()
+    + reverse()
+  }
+
+  enum TransactionType {
+    DEPOT
+    RETRAIT
+    TRANSFERT_INTRA
+    TRANSFERT_INTER
+    REMBOURSEMENT_PRET
+    DECAISSEMENT_PRET
+  }
+
+  enum TransactionStatus {
+    PENDING
+    PROCESSING
+    COMPLETED
+    FAILED
+    REVERSED
+    CANCELLED
+  }
+
+  Transaction --> TransactionType
+  Transaction --> TransactionStatus
+}
+
+' ===== BOUNDED CONTEXT: LOAN =====
+package "Bounded Context: Loan" #FDF2F8 {
+
+  class Loan <<Aggregate Root>> {
+    - id: UUID
+    - customerId: UUID
+    - operatorId: UUID
+    - amount: BigDecimal
+    - interestRate: Double
+    - durationMonths: Integer
+    - monthlyPayment: BigDecimal
+    - totalAmount: BigDecimal
+    - status: LoanStatus
+    - creditScore: Integer
+    - requestedAt: LocalDateTime
+    - approvedAt: LocalDateTime
+    + apply()
+    + approve(rate: Double)
+    + reject(reason: String)
+    + generateSchedule()
+    + close()
+  }
+
+  class Repayment <<Entity>> {
+    - id: UUID
+    - loanId: UUID
+    - dueDate: LocalDate
+    - amount: BigDecimal
+    - principal: BigDecimal
+    - interest: BigDecimal
+    - status: RepaymentStatus
+    - paidAt: LocalDateTime
+    + pay()
+    + markOverdue()
+  }
+
+  enum LoanStatus {
+    DRAFT
+    SUBMITTED
+    UNDER_REVIEW
+    APPROVED
+    REJECTED
+    ACTIVE
+    CLOSED
+    DEFAULTED
+  }
+
+  enum RepaymentStatus {
+    PENDING
+    PAID
+    OVERDUE
+    PARTIAL
+  }
+
+  Loan "1" *-- "1..*" Repayment
+  Loan --> LoanStatus
+  Repayment --> RepaymentStatus
+}
+
+' ===== BOUNDED CONTEXT: OPERATOR =====
+package "Bounded Context: Operator" #F9EBEA {
+
+  class Operator <<Aggregate Root>> {
+    - id: UUID
+    - name: String
+    - code: String
+    - country: String
+    - currency: String
+    - status: OperatorStatus
+    - createdAt: LocalDateTime
+    + activate()
+    + deactivate()
+  }
+
+  class BusinessRule <<Entity>> {
+    - id: UUID
+    - operatorId: UUID
+    - ruleType: RuleType
+    - value: BigDecimal
+    - currency: String
+    - effectiveDate: LocalDate
+    + apply()
+  }
+
+  enum RuleType {
+    COMMISSION_RATE
+    DAILY_LIMIT
+    MONTHLY_LIMIT
+    MIN_TRANSACTION
+    MAX_TRANSACTION
+    LOAN_INTEREST_RATE
+  }
+
+  Operator "1" *-- "0..*" BusinessRule
+  BusinessRule --> RuleType
+}
+
+' ===== BOUNDED CONTEXT: AUTH =====
+package "Bounded Context: Auth" #F4ECF7 {
+
+  class User <<Aggregate Root>> {
+    - id: UUID
+    - email: String
+    - passwordHash: String
+    - role: UserRole
+    - customerId: UUID
+    - operatorId: UUID
+    - isActive: Boolean
+    - lastLoginAt: LocalDateTime
+    - failedAttempts: Integer
+    + login()
+    + logout()
+    + changePassword()
+    + lockAccount()
+  }
+
+  class RefreshToken <<Entity>> {
+    - id: UUID
+    - userId: UUID
+    - token: String
+    - expiresAt: LocalDateTime
+    - isRevoked: Boolean
+    + revoke()
+    + isValid()
+  }
+
+  enum UserRole {
+    CLIENT
+    OPERATOR_ADMIN
+    OPERATOR_ANALYST
+    SUPER_ADMIN
+  }
+
+  User "1" *-- "0..*" RefreshToken
+  User --> UserRole
+}
+
+@enduml
