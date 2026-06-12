@@ -1,5 +1,12 @@
 {
-  "dependencies": {
-    "react-router-dom": "^7.16.0"
+  "name": "bankplatform-microservices",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "frontend",
+    "services/*"
+  ],
+  "engines": {
+    "node": ">=20"
   }
 }
