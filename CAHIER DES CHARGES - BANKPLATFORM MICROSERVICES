@@ -1,0 +1,962 @@
+# 📋 **CAHIER DES CHARGES - BANKPLATFORM MICROSERVICES**
+
+## **Plateforme Bancaire Distribuée - Version 1.0**
+
+---
+
+## 1. **PRÉSENTATION DU PROJET**
+
+### **1.1. Contexte et Objectifs**
+
+La **BankPlatform** est une plateforme bancaire distribuée conçue pour gérer l'ensemble du cycle de vie des opérations bancaires : comptes clients, transactions financières, crédits, vérification KYC, et notifications. Le système suit une architecture microservices avec une communication événementielle asynchrone via Kafka.
+
+**Objectifs stratégiques :**
+- ✅ Offrir une expérience bancaire digitale complète et sécurisée
+- ✅ Assurer la scalabilité et la résilience via une architecture distribuée
+- ✅ Respecter les exigences réglementaires (KYC, AML, audit)
+- ✅ Faciliter l'évolution et la maintenance via des bounded contexts bien délimités
+- ✅ Fournir une traçabilité totale des opérations via le Domain Event Sourcing
+
+### **1.2. Portée du Système**
+
+**Inclus dans le périmètre :**
+- Gestion des clients particuliers et professionnels
+- Comptes courants, épargne, et mobile money
+- Opérations de dépôt, retrait, virement
+- Demandes de crédit et suivi des remboursements
+- Vérification documentaire KYC (CNI, passeport, justificatif de domicile)
+- Notifications multi-canaux (Email, SMS, Push)
+- Administration des opérateurs et super-administrateurs
+
+**Hors périmètre (v1) :**
+- Gestion des cartes bancaires physiques/virtuelles
+- Intégration SWIFT/SEPA pour les virements internationaux
+- Système anti-fraude avancé (Machine Learning)
+- Mobile Banking App (seulement Web SPA)
+- Marché des changes (Forex)
+
+---
+
+## 2. **DESCRIPTION FONCTIONNELLE**
+
+### **2.1. Acteurs du Système**
+
+| **Acteur** | **Rôle** | **Permissions** |
+|------------|----------|----------------|
+| **Client** | Utilisateur final de la plateforme | - Consulter ses comptes<br>- Effectuer des virements<br>- Demander un crédit<br>- Uploader documents KYC<br>- Recevoir notifications |
+| **Opérateur Admin** | Gestionnaire de comptes | - Ouvrir/Fermer des comptes<br>- Approuver/Rejeter des crédits<br>- Gérer les clients<br>- Consulter les opérations |
+| **Opérateur Analyst** | Vérificateur KYC | - Vérifier les documents KYC<br>- Consulter les scores de crédit<br>- Analyser les demandes |
+| **Super Admin** | Administrateur système | - Gérer les utilisateurs et rôles<br>- Configurer le système<br>- Accéder aux logs d'audit |
+
+### **2.2. Cas d'Usage Détaillés**
+
+#### **2.2.1. Inscription et Authentification**
+
+```
+USE CASE: UC-01 - Inscription Client
+  Acteurs: Client
+  Précondition: Aucune
+  Description:
+    1. Le client soumet son email, mot de passe, nom, prénom
+    2. Le système vérifie l'unicité de l'email
+    3. Le système hash le mot de passe (BCrypt)
+    4. Un compte utilisateur est créé dans auth-service
+    5. Un profil client est créé dans customer-service (statut KYC_PENDING)
+    6. Un email de bienvenue est envoyé
+  Postcondition: Compte utilisateur créé, en attente de vérification KYC
+
+USE CASE: UC-02 - Connexion
+  Acteurs: Client, Opérateur, Super Admin
+  Précondition: Compte actif et non suspendu
+  Description:
+    1. L'utilisateur soumet email + mot de passe
+    2. Le système vérifie les identifiants
+    3. Un JWT access token + refresh token sont générés
+    4. Le système log l'événement de connexion
+  Postcondition: Session active, JWT valide 15min
+```
+
+#### **2.2.2. Gestion des Comptes**
+
+```
+USE CASE: UC-03 - Création de Compte
+  Acteurs: Client, Opérateur Admin
+  Précondition: KYC approuvé et client actif
+  Description:
+    1. Le client sélectionne le type de compte (COURANT/EPARGNE/MOBILE_MONEY)
+    2. Le système génère un IBAN unique
+    3. Le compte est créé avec statut PENDING dans account-service
+    4. L'opérateur valide la demande (ou auto-validation pour MOBILE_MONEY)
+    5. Le compte passe en statut ACTIVE
+    6. Notification envoyée au client
+  Postcondition: Compte actif, IBAN généré, solde à 0
+
+USE CASE: UC-04 - Dépôt d'Argent
+  Acteurs: Client
+  Précondition: Compte ACTIVE
+  Description:
+    1. Le client spécifie le montant (≥ 0)
+    2. Le système crée une transaction type DEPOSIT
+    3. Calcul des frais (0% pour dépôt)
+    4. Le solde du compte est crédité
+    5. Transaction marquée COMPLETED
+    6. Reçu envoyé par notification
+  Postcondition: Solde augmenté, transaction tracée
+```
+
+#### **2.2.3. Transferts et Transactions**
+
+```
+USE CASE: UC-05 - Virement entre comptes
+  Acteurs: Client, Opérateur
+  Précondition: 
+    - Compte source ACTIVE
+    - Compte destination existe et est ACTIVE
+    - Solde source ≥ (montant + frais)
+    - Limite journalière/mensuelle non dépassée
+  Description:
+    1. Le client renseigne : compte destinataire, montant, description
+    2. Le système calcule les frais (0.5% du montant pour transfert)
+    3. Vérification des limites et du solde
+    4. Débit du compte source (montant + frais)
+    5. Crédit du compte destination (montant)
+    6. Transaction enregistrée avec statut COMPLETED
+    7. Event transaction.completed publié dans Kafka
+    8. Notifications envoyées au source et au destinataire
+  Postcondition: Solde source réduit, solde destination augmenté
+```
+
+#### **2.2.4. Crédits et Prêts**
+
+```
+USE CASE: UC-06 - Demande de Crédit
+  Acteurs: Client
+  Précondition: KYC approuvé, credit_score ≥ 400
+  Description:
+    1. Le client soumet : montant, durée, objet (home/car/business/education)
+    2. Le système vérifie le credit_score
+    3. Si score < 400 → rejet automatique
+    4. Calcul du taux d'intérêt (par défaut 8%)
+    5. Génération de l'échéancier d'amortissement
+    6. Demande en statut SUBMITTED
+    7. Envoi en file d'attente pour review opérateur
+  Postcondition: Demande en attente de validation
+
+USE CASE: UC-07 - Approbation/Rejet de Crédit
+  Acteurs: Opérateur Admin
+  Précondition: Demande en statut PENDING_REVIEW
+  Description:
+    1. L'opérateur consulte la demande, le credit_score, historique
+    2. Décision : APPROVED ou REJECTED
+    3. Si APPROVED : 
+       - Statut passe à APPROVED
+       - Échéancier activé
+       - Montant décaissé sur le compte du client
+       - Notification "Crédit approuvé" envoyée
+    4. Si REJECTED :
+       - Statut REJECTED
+       - Raison du rejet enregistrée
+       - Notification "Crédit refusé" envoyée
+  Postcondition: Crédit approuvé et décaissé ou rejeté
+```
+
+#### **2.2.5. Gestion KYC & Documents**
+
+```
+USE CASE: UC-08 - Upload Document KYC
+  Acteurs: Client
+  Précondition: Compte client créé
+  Description:
+    1. Le client upload un document (CNI, Passeport, Justificatif domicile)
+    2. Le document est enregistré avec statut PENDING
+    3. Tesseract OCR extrait les données (nom, numéro, date d'expiration)
+    4. Résultat OCR stocké dans le document
+    5. Le document passe en statut PROCESSING
+    6. Le document est marqué PROCESSING en attendant validation opérateur
+  Postcondition: Document traité par OCR, en attente de validation
+
+USE CASE: UC-09 - Vérification KYC
+  Acteurs: Opérateur Analyst
+  Précondition: Document traité par OCR
+  Description:
+    1. L'opérateur consulte le document et les données extraites
+    2. Compare avec les informations du client
+    3. Vérifie la validité (expiration, authenticité)
+    4. Décision : VERIFIED ou REJECTED
+    5. Si VERIFIED :
+       - Statut KYC du client passe à VERIFIED
+       - Notification "KYC approuvé"
+    6. Si REJECTED :
+       - Motif enregistré
+       - Notification "KYC rejeté, veuillez recommencer"
+  Postcondition: KYC validé ou rejeté, compte client activé
+```
+
+#### **2.2.6. Notifications**
+
+```
+USE CASE: UC-10 - Envoi de Notification
+  Acteurs: Système (automatique)
+  Déclencheur: Événements domaines (TransactionCompleted, LoanApproved, etc.)
+  Description:
+    1. Le système écoute les événements Kafka
+    2. Pour chaque événement :
+       - Récupère le template approprié
+       - Génère le message (email, SMS, push)
+       - Envoie via le canal configuré
+       - Enregistre la notification
+    3. En cas d'échec : 3 tentatives avec backoff exponentiel
+  Postcondition: Notification envoyée
+```
+
+---
+
+## 3. **ARCHITECTURE TECHNIQUE**
+
+### **3.1. Stack Technologique**
+
+| **Couche** | **Technologie** | **Version** |
+|------------|-----------------|-------------|
+| **Frontend** | React + Vite | 19.0.0 / 8.0.0 |
+| **Backend - Java** | Spring Boot 3 | 3.4.4 |
+| **Backend - Python** | FastAPI | 0.115.12 |
+| **Backend - Node.js** | Express | 4.21.0 |
+| **Gateway** | Spring Cloud Gateway | 4.2.0 |
+| **Discovery** | Netflix Eureka | 4.2.0 |
+| **Config Server** | Spring Cloud Config | 4.2.0 |
+| **Event Bus** | Apache Kafka | 3.8.0 |
+| **Base de Données** | PostgreSQL 15 | 15.10 |
+| **Cache** | Redis 7 | 7.4.2 |
+| **Audit** | MongoDB | 7.0.16 |
+| **Containerisation** | Docker / Kubernetes | 1.31.0 |
+| **CI/CD** | GitHub Actions | - |
+
+### **3.2. Architecture Microservices**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                          Frontend (React)                       │
+│                              Port: 3000                         │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ HTTPS
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      API Gateway (Spring)                       │
+│                         Port: 8080                              │
+│                  (JWT Auth Filter, Routing)                     │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+         ┌───────────────────┼───────────────────┐
+         │                   │                   │
+         ▼                   ▼                   ▼
+┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+│  Auth Service   │ │ Customer Service│ │ Account Service │
+│    Port: 8081   │ │    Port: 8082   │ │    Port: 8083   │
+│   (Spring Boot) │ │   (Spring Boot) │ │   (Spring Boot) │
+└─────────────────┘ └─────────────────┘ └─────────────────┘
+         │                   │                   │
+         ▼                   ▼                   ▼
+┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+│Transaction Svc  │ │   Loan Svc      │ │  Document Svc   │
+│    Port: 8084   │ │    Port: 8086   │ │    Port: 8087   │
+│   (Spring Boot) │ │   (FastAPI)     │ │   (FastAPI)     │
+└─────────────────┘ └─────────────────┘ └─────────────────┘
+         │                   │                   │
+         └───────────────────┼───────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    Notification Service                         │
+│                        Port: 8089                               │
+│                       (Node/Express)                            │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                        Kafka Event Bus                          │
+│                    (Topics: transaction.*)                      │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### **3.3. Bounded Contexts et DDD**
+
+| **Bounded Context** | **Service** | **Langage** | **Base de Données** | **Port** |
+|---------------------|-------------|-------------|---------------------|----------|
+| Authentication & Identity | auth-service | Java/Spring | PostgreSQL (auth_db) | 8081 |
+| Customer Management | customer-service | Java/Spring | PostgreSQL (customer_db) | 8082 |
+| Account Management | account-service | Java/Spring | PostgreSQL (account_db) | 8083 |
+| Transaction Processing | transaction-service | Java/Spring | PostgreSQL (transaction_db) | 8084 |
+| Loan Management | loan-service | Python/FastAPI | PostgreSQL (loan_db) | 8086 |
+| Document & OCR | document-service | Python/FastAPI | In-memory | 8087 |
+| Notifications | notification-service | Node/Express | In-memory | 8089 |
+
+### **3.4. Modèle de Données**
+
+#### **Diagramme de Classes UML**
+
+```mermaid
+classDiagram
+    class User {
+        +UUID id
+        +String email
+        +String passwordHash
+        +Role role
+        +boolean isActive
+        +int failedAttempts
+        +DateTime lastLoginAt
+    }
+    class RefreshToken {
+        +UUID id
+        +String token
+        +DateTime expiryDate
+        +boolean isRevoked
+    }
+    class Customer {
+        +UUID id
+        +UUID userId
+        +String firstName
+        +String lastName
+        +int creditScore
+        +KycStatus kycStatus
+        +CustomerStatus status
+    }
+    class Operator {
+        +UUID id
+        +UUID userId
+        +String firstName
+        +String lastName
+        +String department
+        +OperatorRole role
+    }
+    class Account {
+        +UUID id
+        +UUID customerId
+        +String iban
+        +AccountType type
+        +BigDecimal balance
+        +BigDecimal dailyLimit
+        +BigDecimal monthlyLimit
+        +AccountStatus status
+    }
+    class Transaction {
+        +UUID id
+        +String reference
+        +TransactionType type
+        +UUID sourceAccountId
+        +UUID destinationAccountId
+        +BigDecimal amount
+        +BigDecimal fees
+        +TransactionStatus status
+        +DateTime initiatedAt
+    }
+    class Loan {
+        +UUID id
+        +UUID customerId
+        +UUID accountId
+        +BigDecimal amount
+        +BigDecimal interestRate
+        +int durationMonths
+        +LoanStatus status
+        +String purpose
+    }
+    class Repayment {
+        +UUID id
+        +UUID loanId
+        +BigDecimal amount
+        +Date dueDate
+        +RepaymentStatus status
+        +DateTime paidAt
+    }
+    class Document {
+        +UUID id
+        +UUID customerId
+        +DocumentType docType
+        +String filePath
+        +VerificationStatus status
+        +JSON ocrResult
+        +Float confidenceScore
+    }
+    class Notification {
+        +UUID id
+        +UUID recipientId
+        +String channel
+        +String content
+        +NotificationStatus status
+        +int attempts
+    }
+
+    User "1" --> "0..*" RefreshToken : owns
+    User "1" --> "0..1" Customer : profile
+    User "1" --> "0..1" Operator : profile
+    Customer "1" --> "0..*" Account : owns
+    Account "1" --> "0..*" Transaction : has
+    Customer "1" --> "0..*" Loan : applies
+    Loan "1" --> "0..*" Repayment : has
+    Customer "1" --> "0..*" Document : submits
+    User "1" --> "0..*" Notification : receives
+```
+
+### **3.5. Schéma des Bases de Données**
+
+```sql
+-- auth_db
+CREATE TABLE users (
+    id UUID PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    first_name VARCHAR(100),
+    last_name VARCHAR(100),
+    phone_number VARCHAR(20),
+    role VARCHAR(50) NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    failed_attempts INT DEFAULT 0,
+    last_login_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE refresh_tokens (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token VARCHAR(512) NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    is_revoked BOOLEAN DEFAULT FALSE
+);
+
+-- account_db
+CREATE TABLE accounts (
+    id UUID PRIMARY KEY,
+    customer_id UUID NOT NULL,
+    account_number VARCHAR(34) UNIQUE NOT NULL,
+    type VARCHAR(20) NOT NULL,
+    balance DECIMAL(20,2) DEFAULT 0,
+    currency VARCHAR(3) DEFAULT 'XOF',
+    daily_limit DECIMAL(20,2) DEFAULT 1000000,
+    monthly_limit DECIMAL(20,2) DEFAULT 5000000,
+    status VARCHAR(20) DEFAULT 'PENDING',
+    operator_id UUID,
+    opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- transaction_db
+CREATE TABLE transactions (
+    id UUID PRIMARY KEY,
+    reference VARCHAR(50) UNIQUE NOT NULL,
+    type VARCHAR(20) NOT NULL,
+    source_account_id UUID,
+    destination_account_id UUID,
+    amount DECIMAL(20,2) NOT NULL,
+    fees DECIMAL(20,2) DEFAULT 0,
+    commission DECIMAL(20,2) DEFAULT 0,
+    currency VARCHAR(3) DEFAULT 'XOF',
+    status VARCHAR(20) DEFAULT 'PENDING',
+    description TEXT,
+    initiated_by UUID,
+    initiated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP
+);
+
+-- loan_db
+CREATE TABLE loans (
+    id UUID PRIMARY KEY,
+    customer_id UUID NOT NULL,
+    account_id UUID NOT NULL,
+    operator_id UUID,
+    amount DECIMAL(20,2) NOT NULL,
+    interest_rate DECIMAL(5,2) DEFAULT 8.00,
+    duration_months INT NOT NULL,
+    monthly_payment DECIMAL(20,2),
+    total_amount DECIMAL(20,2),
+    status VARCHAR(20) DEFAULT 'SUBMITTED',
+    purpose VARCHAR(50),
+    credit_score INT,
+    rejection_reason TEXT,
+    requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE repayments (
+    id UUID PRIMARY KEY,
+    loan_id UUID NOT NULL REFERENCES loans(id),
+    due_date DATE NOT NULL,
+    amount DECIMAL(20,2) NOT NULL,
+    status VARCHAR(20) DEFAULT 'PENDING',
+    paid_at TIMESTAMP,
+    payment_reference VARCHAR(50)
+);
+```
+
+---
+
+## 4. **EXIGENCES TECHNIQUES ET PERFORMANCES**
+
+### **4.1. Performances**
+
+| **Métrique** | **Cible** | **Seuil Critique** |
+|--------------|-----------|-------------------|
+| **Temps de réponse API** | < 200ms | > 2s |
+| **Transactions par seconde** | 100 TPS | > 50 TPS |
+| **Disponibilité** | 99.9% | < 99% |
+| **Latence Kafka** | < 50ms | > 200ms |
+| **Temps d'OCR** | < 5s | > 30s |
+
+### **4.2. Sécurité**
+
+- ✅ **Authentification** : JWT avec refresh token rotatif (expiration 15min/7j)
+- ✅ **Chiffrement** : Mots de passe hasher avec BCrypt (coût 12)
+- ✅ **HTTPS** : TLS 1.3 pour toutes les communications
+- ✅ **RBAC** : Contrôle d'accès basé sur les rôles (4 niveaux)
+- ✅ **CORS** : Configuration restrictive dans le gateway
+- ✅ **Rate Limiting** : 100 requêtes/minute par utilisateur (à implémenter)
+- ✅ **Audit** : Logs de toutes les opérations sensibles
+
+### **4.3. Scalabilité**
+
+**Stratégies de scaling :**
+- **Horizontal** : Kubernetes HPA (Horizontal Pod Autoscaler)
+- **Vertical** : Ajustement des ressources CPU/Mémoire par pod
+- **Bases de données** : Réplication PostgreSQL + Read Replicas
+- **Kafka** : Augmentation du nombre de partitions pour parallélisme
+- **Frontend** : CDN pour les assets statiques
+
+**Architecture de scaling prévue :**
+```yaml
+# Kubernetes HPA Configuration
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: transaction-service-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: transaction-service
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+```
+
+### **4.4. Résilience**
+
+| **Pattern** | **Implémentation** | **Statut** |
+|-------------|-------------------|------------|
+| **Retry avec Backoff** | Spring Retry, Exponential Backoff | À implémenter |
+| **Circuit Breaker** | Resilience4j | À implémenter |
+| **Bulkhead** | Isolation des threads | À implémenter |
+| **SAGA** | Orchestration vs Choreography | Partiel |
+| **Event Sourcing** | Replay des événements | À implémenter |
+
+### **4.5. Monitoring et Observabilité**
+
+**Stack de monitoring :**
+- **Logs** : ELK Stack (Elasticsearch, Logstash, Kibana)
+- **Métriques** : Prometheus + Grafana
+- **Traces** : Jaeger / Zipkin (Distributed Tracing)
+- **Health Checks** : Spring Boot Actuator + /actuator/health
+- **Alerting** : AlertManager avec règles Prometheus
+
+**Indicateurs clés (KPIs) :**
+```
+- Taux de conversion des transactions : objectif > 98%
+- Temps moyen de traitement KYC : objectif < 24h
+- Délai moyen de réponse aux demandes de crédit : objectif < 48h
+- Disponibilité du système (SLA) : objectif 99.9%
+- Taux d'erreur API : objectif < 0.5%
+```
+
+---
+
+## 5. **INTÉGRATION ET COMMUNICATION**
+
+### **5.1. Communication Synchrone (REST)**
+
+```yaml
+# Exemple d'API REST - Transaction Service
+POST /api/transactions/transfer
+Headers:
+  Authorization: Bearer {JWT}
+  Content-Type: application/json
+Body:
+  {
+    "sourceAccountId": "550e8400-e29b-41d4-a716-446655440000",
+    "destinationAccountId": "550e8400-e29b-41d4-a716-446655440001",
+    "amount": 100000,
+    "description": "Virement à la famille"
+  }
+Response:
+  200 OK:
+  {
+    "transactionId": "770e8400-e29b-41d4-a716-446655440002",
+    "status": "COMPLETED",
+    "reference": "XF20240612-ABC123",
+    "fees": 500,
+    "timestamp": "2024-06-12T10:30:00Z"
+  }
+```
+
+### **5.2. Communication Asynchrone (Kafka Events)**
+
+```
+Topics Kafka:
+├── transaction.initiated
+├── transaction.completed
+├── transaction.failed
+├── account.opened
+├── account.activated
+├── customer.created
+├── customer.kyc.approved
+├── loan.approved
+├── loan.rejected
+├── repayment.processed
+└── document.verified
+
+Event Schema:
+{
+  "eventId": "uuid",
+  "eventType": "transaction.completed",
+  "aggregateId": "uuid",
+  "aggregateType": "Transaction",
+  "timestamp": "2024-06-12T10:30:00Z",
+  "version": 1,
+  "correlationId": "uuid",
+  "causationId": "uuid",
+  "payload": {
+    "transactionId": "uuid",
+    "sourceAccountId": "uuid",
+    "destinationAccountId": "uuid",
+    "amount": 100000,
+    "fees": 500,
+    "status": "COMPLETED"
+  }
+}
+```
+
+### **5.3. Dependencies entre Services**
+
+| **Service Source** | **Service Destination** | **Type** | **Protocole** |
+|--------------------|------------------------|----------|---------------|
+| API Gateway | Auth Service | RestTemplate | HTTP/S |
+| API Gateway | Account Service | LoadBalanced | HTTP/S |
+| API Gateway | Transaction Service | LoadBalanced | HTTP/S |
+| Transaction Service | Account Service | RestTemplate | HTTP/S |
+| Transaction Service | Kafka | Producer | TCP |
+| Notification Service | Kafka | Consumer | TCP |
+| Document Service | Customer Service | Event | Kafka |
+| Loan Service | Transaction Service | Event | Kafka |
+
+---
+
+## 6. **ENVIRONNEMENTS ET DÉPLOIEMENT**
+
+### **6.1. Architecture de Déploiement**
+
+```mermaid
+graph TB
+    subgraph CI/CD["CI/CD Pipeline"]
+        GHA[GitHub Actions]
+        REG[Container Registry]
+    end
+
+    subgraph PROD["Production Environment"]
+        K8S[Kubernetes Cluster]
+        subgraph INFRA["Infrastructure Pods"]
+            GW[api-gateway]
+            DISC[discovery-server]
+            CFG[config-server]
+        end
+        subgraph SVCS["Service Pods"]
+            AUTH[auth-service]
+            CUST[customer-service]
+            ACC[account-service]
+            TXN[transaction-service]
+            LOAN[loan-service]
+            DOC[document-service]
+            NOTIF[notification-service]
+        end
+        subgraph DATA["Data Layer"]
+            PG[(PostgreSQL)]
+            KAFKA[(Kafka)]
+            MONGO[(MongoDB)]
+            REDIS[(Redis)]
+        end
+    end
+
+    GHA -->|push images| REG
+    REG -->|deploy| K8S
+```
+
+### **6.2. Configuration Docker Compose**
+
+```yaml
+# docker-compose.full.yml
+version: '3.8'
+services:
+  # Infrastructure
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_MULTIPLE_DATABASES: auth_db,customer_db,account_db,transaction_db,loan_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "9092:9092"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  mongodb:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+
+  # Java Services
+  auth-service:
+    build: ./services/auth-service
+    depends_on:
+      - postgres
+      - discovery-server
+      - config-server
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "8081:8081"
+
+  # ... (autres services similaires)
+
+volumes:
+  postgres_data:
+  mongodb_data:
+```
+
+### **6.3. Configuration Kubernetes**
+
+```yaml
+# k8s/namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bankplatform
+
+---
+# k8s/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bankplatform-config
+  namespace: bankplatform
+data:
+  SPRING_PROFILES_ACTIVE: "k8s"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-service:9092"
+  POSTGRES_HOST: "postgres-service"
+
+---
+# k8s/secrets.yaml (à encrypter avec Sealed Secrets ou Vault)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bankplatform-secrets
+  namespace: bankplatform
+type: Opaque
+data:
+  JWT_SECRET: "base64_encoded_secret"
+  POSTGRES_PASSWORD: "base64_encoded_password"
+
+---
+# k8s/service.yaml (exemple pour auth-service)
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: bankplatform
+spec:
+  selector:
+    app: auth-service
+  ports:
+    - port: 8081
+      targetPort: 8081
+  type: ClusterIP
+
+---
+# k8s/deployment.yaml (exemple)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: bankplatform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+        - name: auth-service
+          image: bankplatform/auth-service:latest
+          ports:
+            - containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: bankplatform-config
+            - secretRef:
+                name: bankplatform-secrets
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 10
+```
+
+### **6.4. Pipeline CI/CD (GitHub Actions)**
+
+```yaml
+# .github/workflows/ci-cd.yml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-java:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [auth-service, customer-service, account-service, transaction-service]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-java@v3
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: Build with Maven
+        run: |
+          cd services/${{ matrix.service }}
+          mvn clean package -DskipTests
+      - name: Build Docker image
+        run: |
+          docker build -t bankplatform/${{ matrix.service }}:latest ./services/${{ matrix.service }}
+          docker push bankplatform/${{ matrix.service }}:latest
+
+  build-python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [loan-service, document-service]
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          cd services/${{ matrix.service }}
+          pip install -r requirements.txt
+      - name: Build Docker image
+        run: |
+          docker build -t bankplatform/${{ matrix.service }}:latest ./services/${{ matrix.service }}
+          docker push bankplatform/${{ matrix.service }}:latest
+
+  deploy-k8s:
+    needs: [build-java, build-python]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v3
+      - uses: azure/setup-kubectl@v3
+      - name: Apply Kubernetes manifests
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f k8s/secrets.yaml
+          kubectl apply -f k8s/
+        env:
+          KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+```
+
+---
+
+## 7. **PLAN DE MISE EN ŒUVRE**
+
+### **7.1. Phase 1 : Fondations (Semaines 1-2)**
+
+| **Tâche** | **Description** | **Responsable** | **Durée** |
+|-----------|-----------------|-----------------|-----------|
+| Infrastructure | Setup Docker Compose, Kafka, PostgreSQL | DevOps | 2j |
+| Auth Service | Implémentation JWT, inscription, connexion | Backend Java | 3j |
+| Customer Service | CRUD clients, opérateurs | Backend Java | 2j |
+| API Gateway | Routing, JWT filter, CORS | Backend Java | 2j |
+| Frontend | Login, Register, Dashboard basique | Frontend React | 3j |
+
+**Livrables :**
+- ✅ Authentification fonctionnelle
+- ✅ Inscription client avec KYC_PENDING
+- ✅ Page de connexion et dashboard simple
+
+### **7.2. Phase 2 : Core Bancaire (Semaines 3-4)**
+
+| **Tâche** | **Description** | **Responsable** | **Durée** |
+|-----------|-----------------|-----------------|-----------|
+| Account Service | Création comptes, IBAN, balance | Backend Java | 3j |
+| Transaction Service | Dépôts, virements, frais | Backend Java | 4j |
+| Kafka Integration | Événements transaction.* | Backend Java | 2j |
+| Notification Service | Consommation Kafka + envois | Backend Node.js | 2j |
+| Frontend | Comptes, Transactions, Historique | Frontend React | 4j |
+
+**Livrables :**
+- ✅ Ouverture de comptes (3 types)
+- ✅ Dépôts et virements
+- ✅ Reçu par notification
